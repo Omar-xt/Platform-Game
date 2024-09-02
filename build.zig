@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const lib = b.addStaticLibrary(.{
-        .name = "mmo",
+        .name = "mmo-sdl",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
         .root_source_file = b.path("src/root.zig"),
@@ -29,12 +29,49 @@ pub fn build(b: *std.Build) void {
     // running `zig build`).
     b.installArtifact(lib);
 
+    //--msdl
+    const msdl = b.addStaticLibrary(.{
+        .name = "msdl",
+        .root_source_file = b.path("bindings/msdl.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    msdl.linkLibC();
+    msdl.linkSystemLibrary("SDL2");
+    msdl.linkSystemLibrary("SDL2_ttf");
+    b.installArtifact(msdl);
+
+    //-- mapeditor lib
+    const melib = b.addStaticLibrary(.{
+        .name = "mapeditor",
+        .root_source_file = b.path("lib/map-editor/header.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    b.installArtifact(melib);
+
+    //-- mapeditor module
+    const me_mod = b.addModule(
+        "mapeditor",
+        .{
+            .root_source_file = b.path("lib/map-editor/header.zig"),
+            .link_libc = true,
+            .target = target,
+            .optimize = optimize,
+        },
+    );
+    me_mod.addImport("MSDL", &msdl.root_module);
+
     const exe = b.addExecutable(.{
-        .name = "mmo",
+        .name = "mmo-sdl",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
+
+    //-- add modules
+    exe.root_module.addImport("msdl", &msdl.root_module);
+    exe.root_module.addImport("mapeditor", me_mod);
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -63,6 +100,37 @@ pub fn build(b: *std.Build) void {
     // This will evaluate the `run` step rather than the default, which is "install".
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
+
+    const example_editor = b.addExecutable(.{
+        .name = "example-mapeditor",
+        .root_source_file = b.path("examples/mapeditor/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    // example_editor.linkLibC();
+    example_editor.root_module.addImport("MSDL", &msdl.root_module);
+    example_editor.root_module.addImport("mapeditor", me_mod);
+    example_editor.linkSystemLibrary("SDL2_image");
+
+    const editor_run = b.addRunArtifact(example_editor);
+    const editor_run_step = b.step("mapeditor", "Run mapeditor from examples");
+    editor_run_step.dependOn(&editor_run.step);
+
+    //--mapeditor test
+
+    const editor_test = b.addTest(.{
+        .root_source_file = b.path("examples/mapeditor/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    editor_test.root_module.addImport("mapeditor", me_mod);
+    editor_test.root_module.addImport("MSDL", &msdl.root_module);
+    editor_test.linkSystemLibrary("SDL2_image");
+
+    const run_editor_test = b.addRunArtifact(editor_test);
+    const ed_test_step = b.step("test-ed", "Run unit tests for example mapeditor");
+    ed_test_step.dependOn(&run_editor_test.step);
 
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
